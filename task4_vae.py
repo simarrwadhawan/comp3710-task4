@@ -90,3 +90,60 @@ for epoch in range(1, epochs + 1):
 torch.save(model.state_dict(), "vae_oasis.pth")
 print("Training complete, model saved as vae_oasis.pth")
 
+
+#  Visualisation
+import matplotlib.pyplot as plt
+import numpy as np
+from sklearn.manifold import TSNE
+
+def visualize_reconstructions(model, data_loader, device, num_images=8):
+    model.eval()
+    with torch.no_grad():
+        imgs, _ = next(iter(data_loader))
+        imgs = imgs.to(device)
+        recon, _, _ = model(imgs)
+
+        imgs = imgs.cpu().numpy()
+        recon = recon.cpu().numpy()
+
+        fig, axes = plt.subplots(2, num_images, figsize=(15, 4))
+        for i in range(num_images):
+            axes[0, i].imshow(np.squeeze(imgs[i]), cmap='gray')
+            axes[0, i].axis('off')
+            axes[1, i].imshow(np.squeeze(recon[i]), cmap='gray')
+            axes[1, i].axis('off')
+        plt.suptitle("Originals (top) vs Reconstructions (bottom)")
+        plt.savefig("reconstructions.png")
+        plt.close()
+
+def visualize_latent_space(model, data_loader, device, num_samples=2000):
+    model.eval()
+    zs, labels = [], []
+    with torch.no_grad():
+        for imgs, lbls in data_loader:
+            imgs = imgs.to(device)
+            _, mu, _ = model(imgs)
+            zs.append(mu.cpu().numpy())
+            labels.append(lbls.numpy())
+            if len(zs) * data_loader.batch_size > num_samples:
+                break
+    zs = np.concatenate(zs, axis=0)
+    labels = np.concatenate(labels, axis=0)
+
+    # Reduce to 2D
+    tsne = TSNE(n_components=2, random_state=42)
+    z_2d = tsne.fit_transform(zs)
+
+    plt.figure(figsize=(8,6))
+    scatter = plt.scatter(z_2d[:,0], z_2d[:,1], c=labels, cmap='tab10', s=5)
+    plt.colorbar(scatter)
+    plt.title("Latent Space (t-SNE projection)")
+    plt.savefig("latent_space.png")
+    plt.close()
+
+# Run visualisations after training
+visualize_reconstructions(model, test_loader, device)
+visualize_latent_space(model, test_loader, device)
+
+print(" Visualisations saved: reconstructions.png, latent_space.png")
+
