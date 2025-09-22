@@ -1,3 +1,151 @@
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, Dataset
+from torchvision import transforms
+from PIL import Image
+import os
+import matplotlib.pyplot as plt
+
+# =====================
+# Dataset Loader
+# =====================
+class OASISDataset(Dataset):
+    def __init__(self, root_dir, transform=None):
+        self.root_dir = root_dir
+        self.files = [f for f in os.listdir(root_dir) if f.endswith(".png")]
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.files)
+
+    def __getitem__(self, idx):
+        img_path = os.path.join(self.root_dir, self.files[idx])
+        image = Image.open(img_path).convert("L")  # grayscale
+        if self.transform:
+            image = self.transform(image)
+        return image, image  # use image as dummy target
+
+# =====================
+# UNet with Skip Connections
+# =====================
+class UNet(nn.Module):
+    def __init__(self):
+        super(UNet, self).__init__()
+        # Encoder
+        self.enc1 = nn.Sequential(
+            nn.Conv2d(1, 16, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(16, 16, kernel_size=3, padding=1),
+            nn.ReLU(),
+        )
+        self.pool1 = nn.MaxPool2d(2)
+
+        self.enc2 = nn.Sequential(
+            nn.Conv2d(16, 32, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(32, 32, kernel_size=3, padding=1),
+            nn.ReLU(),
+        )
+        self.pool2 = nn.MaxPool2d(2)
+
+        # Bottleneck
+        self.bottleneck = nn.Sequential(
+            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+        )
+
+        # Decoder
+        self.up2 = nn.ConvTranspose2d(64, 32, kernel_size=2, stride=2)
+        self.dec2 = nn.Sequential(
+            nn.Conv2d(64, 32, kernel_size=3, padding=1),  # 32 + skip 32
+            nn.ReLU(),
+        )
+
+        self.up1 = nn.ConvTranspose2d(32, 16, kernel_size=2, stride=2)
+        self.dec1 = nn.Sequential(
+            nn.Conv2d(32, 16, kernel_size=3, padding=1),  # 16 + skip 16
+            nn.ReLU(),
+        )
+
+        self.out = nn.Conv2d(16, 1, kernel_size=1)
+
+    def forward(self, x):
+        # Encoder
+        e1 = self.enc1(x)
+        p1 = self.pool1(e1)
+
+        e2 = self.enc2(p1)
+        p2 = self.pool2(e2)
+
+        # Bottleneck
+        b = self.bottleneck(p2)
+
+        # Decoder with skip connections
+        d2 = self.up2(b)
+        d2 = torch.cat((d2, e2), dim=1)  # Skip connection
+        d2 = self.dec2(d2)
+
+        d1 = self.up1(d2)
+        d1 = torch.cat((d1, e1), dim=1)  # Skip connection
+        d1 = self.dec1(d1)
+
+        out = torch.sigmoid(self.out(d1))
+        return out
+
+# =====================
+# Training and Demo
+# =====================
+def main():
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print("Using device:", device)
+
+    transform = transforms.Compose([
+        transforms.Resize((64, 64)),
+        transforms.ToTensor(),
+    ])
+
+    dataset = OASISDataset("/home/groups/comp3710/OASIS/keras_png_slices_train", transform)
+    dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
+
+    model = UNet().to(device)
+    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    criterion = nn.BCELoss()
+
+    # Train for 1 epoch only (demo)
+    model.train()
+    for imgs, _ in dataloader:
+        imgs = imgs.to(device)
+        outputs = model(imgs)
+        loss = criterion(outputs, imgs)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+    print("✅ Training finished. Loss:", loss.item())
+
+    # Save a segmentation example
+    model.eval()
+    imgs, _ = next(iter(dataloader))
+    imgs = imgs.to(device)
+    with torch.no_grad():
+        preds = model(imgs)
+
+    plt.figure(figsize=(6,3))
+    plt.subplot(1,2,1)
+    plt.imshow(imgs[0][0].cpu(), cmap="gray")
+    plt.title("Input MRI")
+    plt.axis("off")
+
+    plt.subplot(1,2,2)
+    plt.imshow(preds[0][0].cpu(), cmap="gray")
+    plt.title("Predicted Segmentation")
+    plt.axis("off")
+
+    plt.savefig("unet_segmentation.png")
+    print("🖼️ Segmentation saved as unet_segmentation.png")
+
+if __name__ == "__main__":
+    main()
 import os
 import torch
 import torch.nn as nn
